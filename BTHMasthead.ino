@@ -12,9 +12,9 @@
 #endif
 
 #define SLEEPTIME 30
-#define MISSED_BEFORE_SLEEP_AWAKE 5
-#define MISSED_BEFORE_SLEEP_DOZE 2
-#define UPDATE_RATE 1000
+#define MISSED_BEFORE_SLEEP_AWAKE 60
+#define MISSED_BEFORE_SLEEP_DOZE 1
+//#define UPDATE_RATE 1000
 #define RADIO_RX_TIMEOUT 1000
 
 #define ANEMOMETER_SPEED_PIN 5
@@ -192,7 +192,7 @@ void loop ()
   static uint32_t lastTime;
   
   
-  if(awake && newDataAvail && millis() > lastTime + UPDATE_RATE) {
+  if(awake && newDataAvail /*&& millis() > lastTime + UPDATE_RATE*/) {
     memcpy(&data, &_windSpeed, 2);
     #ifdef debug
       cout << _windSpeed << " ";
