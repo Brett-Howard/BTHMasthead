@@ -12,9 +12,10 @@
 #endif
 
 #define SLEEPTIME 30
-#define MISSED_BEFORE_SLEEP_AWAKE 60
+#define MISSED_BEFORE_SLEEP_AWAKE 5
 #define MISSED_BEFORE_SLEEP_DOZE 2
 #define UPDATE_RATE 1000
+#define RADIO_RX_TIMEOUT 1000
 
 #define ANEMOMETER_SPEED_PIN 5
 #define ANEMOMETER_DIR_PIN 6
@@ -222,7 +223,7 @@ void loop ()
   uint8_t len = sizeof(buf);
   if(messageSent) {
     messageSent = false;
-    if (rf95.waitAvailableTimeout(100)) {
+    if (rf95.waitAvailableTimeout(RADIO_RX_TIMEOUT)) {
       if (rf95.recv(buf, &len))
       {
         messagesMissed = 0;
