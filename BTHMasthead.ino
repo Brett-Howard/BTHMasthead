@@ -15,7 +15,8 @@
   ArduinoOutStream cout(Serial);    //only here for debugging
 #endif
 
-#define SLEEPTIME 50   //don't set to 60 or higher as the %60 below breaks things
+#define SLEEPSECS 0   //don't set to 60 or higher as the %60 below breaks things
+#define SLEEPMINS 1
 #define MISSED_BEFORE_SLEEP_AWAKE 60
 #define MISSED_BEFORE_SLEEP_DOZE 1
 //#define UPDATE_RATE 1000
@@ -115,7 +116,7 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(ANEMOMETER_DIR_PIN), isrDirection, FALLING);
 
   //start the alarm for 1 sleeptime from end of setup()
-  rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+SLEEPTIME)%60); 
+  rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60); 
 
   //AHBMASK:  CLK_HPBA_AHB CLK_HPBB_AHB CLK_HPBC_AHB CLK_DSU_AHB CLK_NVMCTRL_AHB CLK_DMAC_AHB CLK_USB_AHB
   //APBAMASK:  CLK_PAC0_APB CLK_PM_APB CLK_SYSCTRL_APB CLK_GCLK_APB CLK_WDT_APB CLK_RTC_APB CLK_EIC_APB
@@ -243,7 +244,7 @@ void loop ()
         messagesMissedAlotment = MISSED_BEFORE_SLEEP_AWAKE;
         awake = true;
         //keep pushing out the alarm so that we only hit the isr and set awake to false if we go to sleep
-        rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+2)%60);
+        rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
         //cout << "Got reply: " << buf << endl << "RSSI: " << rf95.lastRssi() << endl;
         #ifdef SLEEP
           rf95.sleep();
@@ -300,7 +301,7 @@ void isrDirection() {
 
 void isrRTC() {
   //update the alarmtime and return to loop (which will put us to sleep again).
-  rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+SLEEPTIME)%60);
+  rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
   awake = false;
   firstDatum = true;
   messagesMissed = 0;
