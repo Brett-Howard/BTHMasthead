@@ -1,18 +1,21 @@
 #include <SPI.h>                        //SPI Support
 #include <RH_RF95.h>                    //LoRa Radio support
 #include <RHReliableDatagram.h>         //Retransmission and ACK/NAK protocol
-#include <LowPower.h>
 #include <RTCZero.h>
+#include <wiring.c>
+#include <Arduino.h>
+#include <samd.h>
 
 //#define debug
 #define SLEEP
+#define TurnOffExtraStuff
 
 #ifdef debug
   #include <SdFat.h>      //stupidly only have this here for cout. ;)  Judge me if you want its only for debugging.
   ArduinoOutStream cout(Serial);    //only here for debugging
 #endif
 
-#define SLEEPTIME 30
+#define SLEEPTIME 50   //don't set to 60 or higher as the %60 below breaks things
 #define MISSED_BEFORE_SLEEP_AWAKE 60
 #define MISSED_BEFORE_SLEEP_DOZE 1
 //#define UPDATE_RATE 1000
@@ -55,7 +58,7 @@ void setup()
   delay(5000);  //long delay to allow for reprogramming if some sleep thing goes sideways.
 
   pinMode(RED_LED_PIN, OUTPUT );
-  pinMode(13, OUTPUT);
+  digitalWrite(RED_LED_PIN, LOW);
 
   //setup radio pins
   pinMode(RFM95_RST, OUTPUT);
@@ -113,6 +116,35 @@ void setup()
 
   //start the alarm for 1 sleeptime from end of setup()
   rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+SLEEPTIME)%60); 
+
+  //AHBMASK:  CLK_HPBA_AHB CLK_HPBB_AHB CLK_HPBC_AHB CLK_DSU_AHB CLK_NVMCTRL_AHB CLK_DMAC_AHB CLK_USB_AHB
+  //APBAMASK:  CLK_PAC0_APB CLK_PM_APB CLK_SYSCTRL_APB CLK_GCLK_APB CLK_WDT_APB CLK_RTC_APB CLK_EIC_APB
+  //APBBMASK:  CLK_PAC1_APB CLK_DSU_APB CLK_NVMCTRL_APB CLK_PORT_APB CLK_DMAC_APB CLK_USB_APB
+  //APBCMASK:  CLK_SERCOM0_APB CLK_SERCOM1_APB CLK_SERCOM2_APB CLK_SERCOM3_APB CLK_SERCOM4_APB CLK_SERCOM5_APB CLK_TCC0_APB CLK_TCC1_APB CLK_TCC2_APB CLK_TC3_APB CLK_TC4_APB CLK_TC5_APB CLK_ADC_APB CLK_DAC_APB
+
+  #ifdef TurnOffExtraStuff
+    REG_PM_APBAMASK &= ~PM_APBAMASK_WDT;
+
+    REG_PM_APBBMASK &= ~PM_APBBMASK_DSU;
+    REG_PM_APBBMASK &= ~PM_APBBMASK_NVMCTRL;
+    REG_PM_APBBMASK &= ~PM_APBBMASK_USB;
+    
+    REG_PM_APBCMASK &= ~PM_APBCMASK_SERCOM0;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_SERCOM1;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_SERCOM2;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_SERCOM3;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_TCC2;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_TC3;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_TC4;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_TC5;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_TC6;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_TC7;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_DAC;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_PTC;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_I2S;
+    REG_PM_APBCMASK &= ~PM_APBCMASK_AC;
+    //REG_PM_APBCMASK &= ~PM_APBCMASK_ADC;
+  #endif
 }
 
 bool newDataAvail;
@@ -153,6 +185,7 @@ uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 bool awake = false;
 uint8_t messagesMissed = 0;
 uint8_t messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
+bool  firstDatum = true;
 
 void loop ()
 {
@@ -166,7 +199,7 @@ void loop ()
     #ifdef debug
       cout << "sending \"McFly?\" to see if anyone is out there" << endl;
     #endif
-    memcpy(&data, "McFly?", 6);
+    memcpy(&data, "McFly\0", 6);
     rf95.send((uint8_t *)data, 6);
     rf95.waitPacketSent();
     messageSent = true;
@@ -186,13 +219,16 @@ void loop ()
     newDataAvail = false;
   
     //blip(RED_LED_PIN, 1, 10);
-    rf95.send((uint8_t *)data, 6);
-    rf95.waitPacketSent();
-    prevSpeed = _windSpeed;
-    prevDir = _windDirection;
-    prevVolts = battVolts;
-    messageSent = true;
-    lastTime = millis();
+    if(!firstDatum) {     //throw away first data point because the timers aren't trustworthy after waking
+      rf95.send((uint8_t *)data, 6);
+      rf95.waitPacketSent();
+      prevSpeed = _windSpeed;
+      prevDir = _windDirection;
+      prevVolts = battVolts;
+      messageSent = true;
+      lastTime = millis();
+    }
+    firstDatum = false;
   }
   digitalWrite(RED_LED_PIN, LOW);
   
@@ -205,8 +241,9 @@ void loop ()
       {
         messagesMissed = 0;
         messagesMissedAlotment = MISSED_BEFORE_SLEEP_AWAKE;
+        awake = true;
         //keep pushing out the alarm so that we only hit the isr and set awake to false if we go to sleep
-        rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+SLEEPTIME)%60);
+        rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+2)%60);
         //cout << "Got reply: " << buf << endl << "RSSI: " << rf95.lastRssi() << endl;
         #ifdef SLEEP
           rf95.sleep();
@@ -226,13 +263,12 @@ void loop ()
       #endif
       if(messagesMissed > messagesMissedAlotment) {
         awake = false;
+        firstDatum = true;
         #ifdef SLEEP
           USBDevice.detach();
           rf95.sleep();
           rtc.standbyMode();
         #endif
-        //pinMode(ANEMOMETER_SPEED_PIN, OUTPUT);      //only way I can get the anemometer interrupts to stop happening.  detachInterrupt() doesn't seem to work.
-        //pinMode(ANEMOMETER_DIR_PIN, OUTPUT);
       }
     }
   }
@@ -266,6 +302,7 @@ void isrRTC() {
   //update the alarmtime and return to loop (which will put us to sleep again).
   rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+SLEEPTIME)%60);
   awake = false;
+  firstDatum = true;
   messagesMissed = 0;
   messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
 }
@@ -304,7 +341,7 @@ static uint16_t getBatteryVoltage () {
   measBatt *= 2;    // the board has a divide by 2, so multiply back
   measBatt *= 330;  // Multiply by 3.3V, the analog reference voltage * 100 so we don't have to do float math
   measBatt /= 1024; // convert "counts" to voltage
-  
+
   return uint16_t(measBatt);
 }  //getBatteryVoltage
 
