@@ -5,6 +5,7 @@
 #include <RTCZero.h>
 
 //#define debug
+#define SLEEP
 
 #ifdef debug
   #include <SdFat.h>      //stupidly only have this here for cout. ;)  Judge me if you want its only for debugging.
@@ -101,43 +102,12 @@ void setup()
   // you can set transmitter powers from 5 to 23 dBm:
   rf95.setTxPower(5, false);
 
-  rf95.setModemConfig(RH_RF95::ModemConfigChoice::Bw500Cr45Sf128);
-  /*if(!manager.init())
-  {
-    #ifdef debug
-      Serial.println(F("Lora Radio Initialization Failed"));
-    #endif
-    failBlink();
-  }
-  Serial.println(F("LoRa radio initialized successfully"));
-  
-  if (!rf95.setFrequency(RF95_FREQ)) {
-    #ifdef debug
-      Serial.println(F("setFrequency failed"));
-    #endif
-    failBlink();
-  }
-  #ifdef debug
-    Serial.print(F("Set Freq to: ")); Serial.print(RF95_FREQ); Serial.println(F(" Mhz"));
-  #endif
-
-  // The default transmitter power is 13dBm, using PA_BOOST.
-  // If you are using RFM95/96/97/98 modules which uses the PA_BOOST transmitter pin, then 
-  // you can set transmitter powers from 5 to 23 dBm:
-  rf95.setTxPower(10, false);
-
   //Bw125Cr45Sf128 - Bw = 125 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on. Default medium range.
   //Bw500Cr45Sf128 - Bw = 500 kHz, Cr = 4/5, Sf = 128chips/symbol, CRC on. Fast+short range.
   //Bw31_25Cr48Sf512 - Bw = 31.25 kHz, Cr = 4/8, Sf = 512chips/symbol, CRC on. Slow+long range.
   //Bw125Cr48Sf4096 - Bw = 125 kHz, Cr = 4/8, Sf = 4096chips/symbol, CRC on. Slow+long range.
   rf95.setModemConfig(RH_RF95::ModemConfigChoice::Bw125Cr45Sf128);
 
-  // You can optionally require this module to wait until Channel Activity
-  // Detection shows no activity on the channel before transmitting by setting
-  // the CAD timeout to non-zero:
-  rf95.setCADTimeout(10000);*/
-
-  //The loop now manages these interrupts so its not necessary to attach them in setup()
   attachInterrupt(digitalPinToInterrupt(ANEMOMETER_SPEED_PIN), isrSpeed, FALLING);
   attachInterrupt(digitalPinToInterrupt(ANEMOMETER_DIR_PIN), isrDirection, FALLING);
 
@@ -180,7 +150,7 @@ uint16_t battVolts;
 uint8_t data[7];
 // Dont put this on the stack:
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
-bool awake = true;
+bool awake = false;
 uint8_t messagesMissed = 0;
 uint8_t messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
 
@@ -191,8 +161,18 @@ void loop ()
   static bool messageSent = false;
   static uint32_t lastTime;
   
-  
-  if(awake && newDataAvail /*&& millis() > lastTime + UPDATE_RATE*/) {
+  if(!awake)
+  {
+    #ifdef debug
+      cout << "sending \"McFly?\" to see if anyone is out there" << endl;
+    #endif
+    memcpy(&data, "McFly?", 6);
+    rf95.send((uint8_t *)data, 6);
+    rf95.waitPacketSent();
+    messageSent = true;
+    messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
+  }
+  else if(awake && newDataAvail /*&& millis() > lastTime + UPDATE_RATE*/) {
     memcpy(&data, &_windSpeed, 2);
     #ifdef debug
       cout << _windSpeed << " ";
@@ -214,10 +194,7 @@ void loop ()
     messageSent = true;
     lastTime = millis();
   }
-  //else
-    //strcpy((char*)&data, "McFly?");  //see if the base station is present
-  
-  digitalWrite(RED_LED_PIN, LOW);  //seems like when going to sleep the light comes on if I don't do this.
+  digitalWrite(RED_LED_PIN, LOW);
   
   uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
   uint8_t len = sizeof(buf);
@@ -228,10 +205,12 @@ void loop ()
       {
         messagesMissed = 0;
         messagesMissedAlotment = MISSED_BEFORE_SLEEP_AWAKE;
-        //Serial.print("Got reply: ");
-        //Serial.println((char*)buf);
-        //Serial.print("RSSI: ");
-        //Serial.println(rf95.lastRssi(), DEC);        
+        //keep pushing out the alarm so that we only hit the isr and set awake to false if we go to sleep
+        rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+SLEEPTIME)%60);
+        //cout << "Got reply: " << buf << endl << "RSSI: " << rf95.lastRssi() << endl;
+        #ifdef SLEEP
+          rf95.sleep();
+        #endif
       }
       else
       {
@@ -247,10 +226,11 @@ void loop ()
       #endif
       if(messagesMissed > messagesMissedAlotment) {
         awake = false;
-        USBDevice.detach();
-        delay(100);
-        rf95.sleep();
-        rtc.standbyMode();
+        #ifdef SLEEP
+          USBDevice.detach();
+          rf95.sleep();
+          rtc.standbyMode();
+        #endif
         //pinMode(ANEMOMETER_SPEED_PIN, OUTPUT);      //only way I can get the anemometer interrupts to stop happening.  detachInterrupt() doesn't seem to work.
         //pinMode(ANEMOMETER_DIR_PIN, OUTPUT);
       }
@@ -285,7 +265,7 @@ void isrDirection() {
 void isrRTC() {
   //update the alarmtime and return to loop (which will put us to sleep again).
   rtc.setAlarmTime(rtc.getHours(), rtc.getMinutes(), (rtc.getSeconds()+SLEEPTIME)%60);
-  awake = true;
+  awake = false;
   messagesMissed = 0;
   messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
 }
