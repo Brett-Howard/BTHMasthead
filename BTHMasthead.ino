@@ -17,7 +17,7 @@
 
 #define SLEEPSECS 0   //don't set to 60 or higher as the %60 below breaks things
 #define SLEEPMINS 1
-#define MISSED_BEFORE_SLEEP_AWAKE 60
+#define MISSED_BEFORE_SLEEP_AWAKE 100
 #define MISSED_BEFORE_SLEEP_DOZE 1
 //#define UPDATE_RATE 1000
 #define RADIO_RX_TIMEOUT 1000
@@ -38,7 +38,6 @@
 #define SERVER_ADDRESS 2
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
-//RHReliableDatagram manager(rf95, CLIENT_ADDRESS);
 RTCZero rtc;
 
 const byte seconds = 0;
@@ -114,6 +113,7 @@ void setup()
 
   attachInterrupt(digitalPinToInterrupt(ANEMOMETER_SPEED_PIN), isrSpeed, FALLING);
   attachInterrupt(digitalPinToInterrupt(ANEMOMETER_DIR_PIN), isrDirection, FALLING);
+  //tcConfigure(1000);  //1 second timer 
 
   //start the alarm for 1 sleeptime from end of setup()
   rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60); 
@@ -299,6 +299,14 @@ void isrDirection() {
 	}
 }
 
+void TC5_Handler (void) {
+    if(micros() - speedPulse > TIMEOUT) {
+		  _windSpeed = 0;
+		  newDataAvail = true;
+	  } 
+    TC5->COUNT16.INTFLAG.bit.MC0 = 1; //don't change this, it's part of the timer code
+  }
+
 void isrRTC() {
   //update the alarmtime and return to loop (which will put us to sleep again).
   rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
@@ -465,4 +473,47 @@ bool checkSpeedDev(long knots, int dev)
       return true;
     }
     return false;
+}
+
+//////////////////////////////////////////////////////Timer Counter Configuration///////////////////////////////////////////////////
+void tcConfigure(int sampleRate)
+{
+  // Enable GCLK for TCC2 and TC5 (timer counter input clock)
+  GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(GCM_TC4_TC5)) ;
+  while (GCLK->STATUS.bit.SYNCBUSY);
+
+  tcReset(); //reset TC5
+
+  // Set Timer counter Mode to 16 bits
+  TC5->COUNT16.CTRLA.reg |= TC_CTRLA_MODE_COUNT32;
+  // Set TC5 mode as match frequency
+  TC5->COUNT16.CTRLA.reg |= TC_CTRLA_WAVEGEN_MFRQ;
+  //set prescaler and enable TC5
+  TC5->COUNT16.CTRLA.reg |= TC_CTRLA_PRESCALER_DIV1024 | TC_CTRLA_ENABLE;
+  //set TC5 timer counter based off of the system clock and the user defined sample rate or waveform
+  TC5->COUNT16.CC[0].reg = (uint16_t) (SystemCoreClock / sampleRate - 1);
+  delay(10);
+
+  // Configure interrupt request
+  NVIC_DisableIRQ(TC5_IRQn);
+  NVIC_ClearPendingIRQ(TC5_IRQn);
+  NVIC_SetPriority(TC5_IRQn, 0);
+  NVIC_EnableIRQ(TC5_IRQn);
+
+  // Enable the TC5 interrupt request
+  TC5->COUNT16.INTENSET.bit.MC0 = 1;
+  delay(10); //wait until TC5 is done syncing 
+} 
+//Reset TC5 
+void tcReset()
+{
+  TC5->COUNT16.CTRLA.reg = TC_CTRLA_SWRST;
+  delay(10);
+  while (TC5->COUNT16.CTRLA.bit.SWRST);
+}
+//disable TC5
+void tcDisable()
+{
+  TC5->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
+  delay(10);
 }
