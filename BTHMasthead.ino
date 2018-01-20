@@ -75,7 +75,7 @@ void setup()
   rtc.setDate(day, month, year);        //set date to bogus value
 
   rtc.attachInterrupt(isrRTC);
-  rtc.enableAlarm(rtc.MATCH_SS); // Match seconds only
+  rtc.enableAlarm(rtc.MATCH_MMSS); // Match minutes and seconds only
 
   while (!rf95.init()) {
     #ifdef debug
@@ -137,7 +137,7 @@ void setup()
     REG_PM_APBCMASK &= ~PM_APBCMASK_TCC2;
     REG_PM_APBCMASK &= ~PM_APBCMASK_TC3;
     REG_PM_APBCMASK &= ~PM_APBCMASK_TC4;
-    REG_PM_APBCMASK &= ~PM_APBCMASK_TC5;
+    //REG_PM_APBCMASK &= ~PM_APBCMASK_TC5;
     REG_PM_APBCMASK &= ~PM_APBCMASK_TC6;
     REG_PM_APBCMASK &= ~PM_APBCMASK_TC7;
     REG_PM_APBCMASK &= ~PM_APBCMASK_DAC;
