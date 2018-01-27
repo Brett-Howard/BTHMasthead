@@ -15,8 +15,8 @@
   ArduinoOutStream cout(Serial);    //only here for debugging
 #endif
 
-#define SLEEPSECS 10   //don't set to 60 or higher as the %60 below breaks things
-#define SLEEPMINS 0
+#define SLEEPSECS 0   //don't set to 60 or higher as the %60 below breaks things
+#define SLEEPMINS 1
 #define MISSED_BEFORE_SLEEP_AWAKE 100
 #define MISSED_BEFORE_SLEEP_DOZE 1
 //#define UPDATE_RATE 1000
