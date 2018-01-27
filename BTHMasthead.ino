@@ -15,12 +15,12 @@
   ArduinoOutStream cout(Serial);    //only here for debugging
 #endif
 
-#define SLEEPSECS 0   //don't set to 60 or higher as the %60 below breaks things
-#define SLEEPMINS 1
+#define SLEEPSECS 10   //don't set to 60 or higher as the %60 below breaks things
+#define SLEEPMINS 0
 #define MISSED_BEFORE_SLEEP_AWAKE 100
 #define MISSED_BEFORE_SLEEP_DOZE 1
 //#define UPDATE_RATE 1000
-#define RADIO_RX_TIMEOUT 1000
+#define RADIO_RX_TIMEOUT 150
 
 #define ANEMOMETER_SPEED_PIN 5
 #define ANEMOMETER_DIR_PIN 6
@@ -113,7 +113,7 @@ void setup()
 
   attachInterrupt(digitalPinToInterrupt(ANEMOMETER_SPEED_PIN), isrSpeed, FALLING);
   attachInterrupt(digitalPinToInterrupt(ANEMOMETER_DIR_PIN), isrDirection, FALLING);
-  //tcConfigure(1000);  //1 second timer 
+  tcConfigure(1000);  //1 second timer 
 
   //start the alarm for 1 sleeptime from end of setup()
   rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60); 
@@ -178,9 +178,10 @@ const int DIR_DEV_LIMIT_2 = 10; // Deviation from last measurement to be valid. 
 
 int16_t _windDirection;
 uint16_t _windSpeed;
+uint8_t _messageCount = 0;
 uint16_t battVolts;
 
-uint8_t data[7];
+uint8_t data[8];
 // Dont put this on the stack:
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 bool awake = false;
@@ -206,22 +207,30 @@ void loop ()
     messageSent = true;
     messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
   }
-  else if(awake && newDataAvail /*&& millis() > lastTime + UPDATE_RATE*/) {
+  else if(awake && newDataAvail) {
     memcpy(&data, &_windSpeed, 2);
     #ifdef debug
       cout << _windSpeed << " ";
     #endif
     memcpy(&data[2], &_windDirection, 2);
     #ifdef debug
-      cout << _windDirection << endl;
+      cout << _windDirection << " ";
     #endif
     battVolts = getBatteryVoltage();
+    #ifdef debug
+      cout << battVolts << " ";
+    #endif
     memcpy(&data[4],&battVolts, 2);
+    memcpy(&data[6], &_messageCount, 1);
+    #ifdef debug
+      Serial.println(_messageCount, DEC);
+    #endif
+    ++_messageCount;
     newDataAvail = false;
   
     //blip(RED_LED_PIN, 1, 10);
     if(!firstDatum) {     //throw away first data point because the timers aren't trustworthy after waking
-      rf95.send((uint8_t *)data, 6);
+      rf95.send((uint8_t *)data, 7);
       rf95.waitPacketSent();
       prevSpeed = _windSpeed;
       prevDir = _windDirection;
