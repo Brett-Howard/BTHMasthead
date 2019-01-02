@@ -253,6 +253,7 @@ void loop ()
         messagesMissedAlotment = MISSED_BEFORE_SLEEP_AWAKE;
         awake = true;
         //keep pushing out the alarm so that we only hit the isr and set awake to false if we go to sleep
+        //TODO: If seconds rolls over this doesn't increment the next segment up.  The fact that it has to do 100 messages before it shuts down makes this work though...
         rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
         //cout << "Got reply: " << buf << endl << "RSSI: " << rf95.lastRssi() << endl;
         #ifdef SLEEP
