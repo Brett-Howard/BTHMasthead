@@ -2,6 +2,7 @@
 #include <RH_RF95.h>                    //LoRa Radio support
 #include <RHReliableDatagram.h>         //Retransmission and ACK/NAK protocol
 #include <RTCZero.h>
+#include <Timezone.h>
 #include <wiring.c>
 #include <Arduino.h>
 #include <samd.h>
@@ -16,9 +17,9 @@
 #endif
 
 #define SLEEPSECS 0   //don't set to 60 or higher as the %60 below breaks things
-#define SLEEPMINS 1
+#define SLEEPMINS 2
 #define MISSED_BEFORE_SLEEP_AWAKE 100
-#define MISSED_BEFORE_SLEEP_DOZE 1
+#define MISSED_BEFORE_SLEEP_DOZE 3
 //#define UPDATE_RATE 1000
 #define RADIO_RX_TIMEOUT 150
 
@@ -39,14 +40,6 @@
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 RTCZero rtc;
-
-const byte seconds = 0;
-const byte minutes = 0;
-const byte hours = 0;
-
-const byte day = 1;
-const byte month = 1;
-const byte year = 17;
 
 void setup()
 {
@@ -71,8 +64,8 @@ void setup()
   delay(10);
 
   rtc.begin();
-  rtc.setTime(hours, minutes, seconds); //set time to bogus value
-  rtc.setDate(day, month, year);        //set date to bogus value
+  rtc.setTime(0, 0, 0); //set time to bogus value
+  rtc.setDate(1, 1, 17);        //set date to bogus value
 
   rtc.attachInterrupt(isrRTC);
   rtc.enableAlarm(rtc.MATCH_MMSS); // Match minutes and seconds only
@@ -116,7 +109,7 @@ void setup()
   tcConfigure(1000);  //1 second timer 
 
   //start the alarm for 1 sleeptime from end of setup()
-  rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60); 
+  updateRTCAlarm();
 
   //AHBMASK:  CLK_HPBA_AHB CLK_HPBB_AHB CLK_HPBC_AHB CLK_DSU_AHB CLK_NVMCTRL_AHB CLK_DMAC_AHB CLK_USB_AHB
   //APBAMASK:  CLK_PAC0_APB CLK_PM_APB CLK_SYSCTRL_APB CLK_GCLK_APB CLK_WDT_APB CLK_RTC_APB CLK_EIC_APB
@@ -254,7 +247,9 @@ void loop ()
         awake = true;
         //keep pushing out the alarm so that we only hit the isr and set awake to false if we go to sleep
         //TODO: If seconds rolls over this doesn't increment the next segment up.  The fact that it has to do 100 messages before it shuts down makes this work though...
-        rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
+        //rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
+        updateRTCAlarm();
+
         //cout << "Got reply: " << buf << endl << "RSSI: " << rf95.lastRssi() << endl;
         #ifdef SLEEP
           rf95.sleep();
@@ -270,15 +265,18 @@ void loop ()
     else {      //no one is acknologing our transmissions so lets go to sleep and try again later
       messagesMissed++;
       #ifdef debug
-        cout << "In space no one can hear you scream " << messagesMissed << endl;
+        cout << "No ACK received... missed " << unsigned(messagesMissed) << " out of " << unsigned(messagesMissedAlotment) << endl;
       #endif
-      if(messagesMissed > messagesMissedAlotment) {
+      if(messagesMissed >= messagesMissedAlotment) {
         awake = false;
         firstDatum = true;
         #ifdef SLEEP
           USBDevice.detach();
           rf95.sleep();
           rtc.standbyMode();
+        #endif
+        #ifndef SLEEP
+          delay(SLEEPMINS*60000+SLEEPSECS*1000);
         #endif
       }
     }
@@ -319,11 +317,25 @@ void TC5_Handler (void) {
 
 void isrRTC() {
   //update the alarmtime and return to loop (which will put us to sleep again).
-  rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
+  //rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
+  #ifdef debug
+    cout << unsigned(rtc.getHours()) << ":" << unsigned(rtc.getMinutes()) << ":" << unsigned(rtc.getSeconds()) << endl;
+  #endif
+  updateRTCAlarm();
+  #ifdef debug
+    cout << hour(now()) << ":" << minute(now()) << ":" << second(now()) << endl;
+  #endif
+
   awake = false;
   firstDatum = true;
   messagesMissed = 0;
   messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
+}
+
+static void updateRTCAlarm () {
+  setTime(rtc.getHours(), rtc.getMinutes(), rtc.getSeconds(), rtc.getDay(), rtc.getMonth(), rtc.getYear());
+  adjustTime(SLEEPMINS*60+SLEEPSECS);
+  rtc.setAlarmTime(hour(now()), minute(now()), second(now()));
 }
 
 static void failBlink() {
