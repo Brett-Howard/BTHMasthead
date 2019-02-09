@@ -2,26 +2,27 @@
 #include <RH_RF95.h>                    //LoRa Radio support
 #include <RHReliableDatagram.h>         //Retransmission and ACK/NAK protocol
 #include <RTCZero.h>
-#include <Timezone.h>
+#include <Timezone.h>  //there seems to be a weird conflict with this library.  For some reason it sometimes doesn't compile with this.
+//Removing timezone.h and commenting out the contents of updateRTCAlarm() allows it to compile then putting all of that back it then
+//seems to fix things even though none of the code is technically changed from when it wasn't working.  No friggin clue.
 #include <wiring.c>
 #include <Arduino.h>
 #include <samd.h>
 
 //#define debug
 #define SLEEP
-#define TurnOffExtraStuff
+//#define TurnOffExtraStuff
 
 #ifdef debug
   #include <SdFat.h>      //stupidly only have this here for cout. ;)  Judge me if you want its only for debugging.
   ArduinoOutStream cout(Serial);    //only here for debugging
 #endif
 
-#define SLEEPSECS 0   //don't set to 60 or higher as the %60 below breaks things
-#define SLEEPMINS 2
+#define SLEEPSECS 0
+#define SLEEPMINS 1
 #define MISSED_BEFORE_SLEEP_AWAKE 100
 #define MISSED_BEFORE_SLEEP_DOZE 3
-//#define UPDATE_RATE 1000
-#define RADIO_RX_TIMEOUT 150
+#define RADIO_RX_TIMEOUT 500
 
 #define ANEMOMETER_SPEED_PIN 5
 #define ANEMOMETER_DIR_PIN 6
@@ -200,7 +201,8 @@ void loop ()
     messageSent = true;
     messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
   }
-  else if(awake && newDataAvail) {
+  else if(awake && newDataAvail) 
+  {
     memcpy(&data, &_windSpeed, 2);
     #ifdef debug
       cout << _windSpeed << " ";
@@ -220,7 +222,7 @@ void loop ()
     #endif
     ++_messageCount;
     newDataAvail = false;
-  
+
     //blip(RED_LED_PIN, 1, 10);
     if(!firstDatum) {     //throw away first data point because the timers aren't trustworthy after waking
       rf95.send((uint8_t *)data, 7);
@@ -246,8 +248,6 @@ void loop ()
         messagesMissedAlotment = MISSED_BEFORE_SLEEP_AWAKE;
         awake = true;
         //keep pushing out the alarm so that we only hit the isr and set awake to false if we go to sleep
-        //TODO: If seconds rolls over this doesn't increment the next segment up.  The fact that it has to do 100 messages before it shuts down makes this work though...
-        //rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
         updateRTCAlarm();
 
         //cout << "Got reply: " << buf << endl << "RSSI: " << rf95.lastRssi() << endl;
@@ -270,18 +270,27 @@ void loop ()
       if(messagesMissed >= messagesMissedAlotment) {
         awake = false;
         firstDatum = true;
+        messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
         #ifdef SLEEP
+          updateRTCAlarm();
           USBDevice.detach();
           rf95.sleep();
           rtc.standbyMode();
         #endif
+
+        //if not setup to sleep, wait in a busy loop here in the same place where you would wait if the system was actually sleeping.
         #ifndef SLEEP
           delay(SLEEPMINS*60000+SLEEPSECS*1000);
         #endif
-      }
-    }
-  }
-}
+      } //end of message allotment missed (sleep)
+    }   //end of no ack received
+  }  //end message sent
+}  //end loop()
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void isrSpeed() {
   //Serial.println("isrSpeed");
@@ -308,34 +317,35 @@ void isrDirection() {
 }
 
 void TC5_Handler (void) {
-    if(micros() - speedPulse > TIMEOUT) {
-		  _windSpeed = 0;
-		  newDataAvail = true;
-	  } 
-    TC5->COUNT16.INTFLAG.bit.MC0 = 1; //don't change this, it's part of the timer code
-  }
+  if(micros() - speedPulse > TIMEOUT) {
+    _windSpeed = 0;
+	  newDataAvail = true;
+	} 
+  TC5->COUNT16.INTFLAG.bit.MC0 = 1; //don't change this, it's part of the timer code
+}
 
 void isrRTC() {
   //update the alarmtime and return to loop (which will put us to sleep again).
-  //rtc.setAlarmTime(rtc.getHours(), (rtc.getMinutes()+SLEEPMINS)%60, (rtc.getSeconds()+SLEEPSECS)%60);
   #ifdef debug
-    cout << unsigned(rtc.getHours()) << ":" << unsigned(rtc.getMinutes()) << ":" << unsigned(rtc.getSeconds()) << endl;
+    cout << "in ISRRTC" << endl;
   #endif
-  updateRTCAlarm();
-  #ifdef debug
-    cout << hour(now()) << ":" << minute(now()) << ":" << second(now()) << endl;
-  #endif
-
-  awake = false;
-  firstDatum = true;
   messagesMissed = 0;
-  messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
+  updateRTCAlarm();
 }
 
 static void updateRTCAlarm () {
+  //set the time module time based on current rtc time
   setTime(rtc.getHours(), rtc.getMinutes(), rtc.getSeconds(), rtc.getDay(), rtc.getMonth(), rtc.getYear());
+  #ifdef debug
+    cout << unsigned(rtc.getHours()) << ":" << unsigned(rtc.getMinutes()) << ":" << unsigned(rtc.getSeconds()) << endl;
+  #endif
+  //add the sleep time to the time module
   adjustTime(SLEEPMINS*60+SLEEPSECS);
+  //use the time module time to set the rtc alarm
   rtc.setAlarmTime(hour(now()), minute(now()), second(now()));
+  #ifdef debug
+    cout << hour(now()) << ":" << minute(now()) << ":" << second(now()) << endl;
+  #endif
 }
 
 static void failBlink() {
