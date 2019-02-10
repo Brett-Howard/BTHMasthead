@@ -11,7 +11,7 @@
 
 //#define debug
 #define SLEEP
-//#define TurnOffExtraStuff
+#define TurnOffExtraStuff
 
 #ifdef debug
   #include <SdFat.h>      //stupidly only have this here for cout. ;)  Judge me if you want its only for debugging.
@@ -19,10 +19,10 @@
 #endif
 
 #define SLEEPSECS 0
-#define SLEEPMINS 1
-#define MISSED_BEFORE_SLEEP_AWAKE 100
+#define SLEEPMINS 3
+#define MISSED_BEFORE_SLEEP_AWAKE 150
 #define MISSED_BEFORE_SLEEP_DOZE 3
-#define RADIO_RX_TIMEOUT 500
+#define RADIO_RX_TIMEOUT 1000
 
 #define ANEMOMETER_SPEED_PIN 5
 #define ANEMOMETER_DIR_PIN 6
@@ -67,6 +67,7 @@ void setup()
   rtc.begin();
   rtc.setTime(0, 0, 0); //set time to bogus value
   rtc.setDate(1, 1, 17);        //set date to bogus value
+  setTime(rtc.getHours(), rtc.getMinutes(), rtc.getSeconds(), rtc.getDay(), rtc.getMonth(), rtc.getYear());
 
   rtc.attachInterrupt(isrRTC);
   rtc.enableAlarm(rtc.MATCH_MMSS); // Match minutes and seconds only
@@ -121,8 +122,8 @@ void setup()
     REG_PM_APBAMASK &= ~PM_APBAMASK_WDT;
 
     REG_PM_APBBMASK &= ~PM_APBBMASK_DSU;
-    REG_PM_APBBMASK &= ~PM_APBBMASK_NVMCTRL;
-    REG_PM_APBBMASK &= ~PM_APBBMASK_USB;
+    //REG_PM_APBBMASK &= ~PM_APBBMASK_NVMCTRL;
+    //REG_PM_APBBMASK &= ~PM_APBBMASK_USB;
     
     REG_PM_APBCMASK &= ~PM_APBCMASK_SERCOM0;
     REG_PM_APBCMASK &= ~PM_APBCMASK_SERCOM1;
@@ -189,7 +190,7 @@ void loop ()
   static int16_t prevDir;
   static bool messageSent = false;
   static uint32_t lastTime;
-  
+
   if(!awake)
   {
     #ifdef debug
@@ -244,12 +245,11 @@ void loop ()
     if (rf95.waitAvailableTimeout(RADIO_RX_TIMEOUT)) {
       if (rf95.recv(buf, &len))
       {
+        updateRTCAlarm();
         messagesMissed = 0;
         messagesMissedAlotment = MISSED_BEFORE_SLEEP_AWAKE;
         awake = true;
-        //keep pushing out the alarm so that we only hit the isr and set awake to false if we go to sleep
-        updateRTCAlarm();
-
+        
         //cout << "Got reply: " << buf << endl << "RSSI: " << rf95.lastRssi() << endl;
         #ifdef SLEEP
           rf95.sleep();
@@ -263,6 +263,7 @@ void loop ()
       }
     }
     else {      //no one is acknologing our transmissions so lets go to sleep and try again later
+      updateRTCAlarm();
       messagesMissed++;
       #ifdef debug
         cout << "No ACK received... missed " << unsigned(messagesMissed) << " out of " << unsigned(messagesMissedAlotment) << endl;
@@ -272,7 +273,6 @@ void loop ()
         firstDatum = true;
         messagesMissedAlotment = MISSED_BEFORE_SLEEP_DOZE;
         #ifdef SLEEP
-          updateRTCAlarm();
           USBDevice.detach();
           rf95.sleep();
           rtc.standbyMode();
@@ -280,7 +280,7 @@ void loop ()
 
         //if not setup to sleep, wait in a busy loop here in the same place where you would wait if the system was actually sleeping.
         #ifndef SLEEP
-          delay(SLEEPMINS*60000+SLEEPSECS*1000);
+          delay((SLEEPMINS*60000+SLEEPSECS*1000)+5000);
         #endif
       } //end of message allotment missed (sleep)
     }   //end of no ack received
@@ -329,8 +329,9 @@ void isrRTC() {
   #ifdef debug
     cout << "in ISRRTC" << endl;
   #endif
-  messagesMissed = 0;
-  updateRTCAlarm();
+  if(messagesMissed >= messagesMissedAlotment) {
+    messagesMissed = 0;
+  }
 }
 
 static void updateRTCAlarm () {
